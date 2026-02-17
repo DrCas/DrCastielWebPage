@@ -11,9 +11,7 @@
 </head>
 <body>
   <div class="bg">
-    <div class="grain"></div>
-    <div class="glow glow-a"></div>
-    <div class="glow glow-b"></div>
+    <div id="heroGlow" class="glow glow-a"></div>
   </div>
 
   <header class="topbar">
@@ -28,7 +26,6 @@
     <nav class="nav">
       <a class="navlink" href="#status">Status</a>
       <a class="navlink" href="#projects">Projects</a>
-      <a class="navlink" href="#ops">Ops</a>
       <a class="navlink" href="#notes">Notes</a>
     </nav>
 
@@ -68,22 +65,28 @@
             <div class="metric">
               <div class="label">Uptime</div>
               <div id="piUptime" class="value mono">—</div>
+              <div class="progress"><span id="meterPiUptime" class="progress-fill"></span></div>
+              <div class="metric-foot"><span id="piUptimePct" class="muted mono">—</span></div>
             </div>
             <div class="metric">
               <div class="label">CPU Temp</div>
               <div id="cpuTemp" class="value mono">—</div>
+              <div class="progress"><span id="meterCpuTemp" class="progress-fill"></span></div>
             </div>
             <div class="metric">
               <div class="label">CPU Load</div>
               <div id="cpuLoad" class="value mono">—</div>
+              <div class="progress"><span id="meterCpuLoad" class="progress-fill"></span></div>
             </div>
             <div class="metric">
               <div class="label">Memory</div>
               <div id="mem" class="value mono">—</div>
+              <div class="progress"><span id="meterMem" class="progress-fill"></span></div>
             </div>
             <div class="metric">
               <div class="label">Disk</div>
               <div id="disk" class="value mono">—</div>
+              <div class="progress"><span id="meterDisk" class="progress-fill"></span></div>
             </div>
             <div class="metric">
               <div class="label">Network</div>
@@ -134,32 +137,6 @@
 
       <div class="grid cards" id="projectCards">
         <!-- cards injected by JS -->
-      </div>
-    </section>
-
-    <section id="ops" class="section">
-      <div class="section-head">
-        <h2>Ops Shortcuts</h2>
-        <p>Buttons that jump you straight into the boring but necessary stuff.</p>
-      </div>
-
-      <div class="grid cards">
-        <a class="card link" href="https://dash.cloudflare.com" target="_blank" rel="noreferrer">
-          <div class="card-title">Cloudflare Dashboard</div>
-          <div class="card-subtitle">tunnels, DNS, firewall, cache</div>
-        </a>
-        <a class="card link" href="https://github.com/DrCas" target="_blank" rel="noreferrer">
-          <div class="card-title">GitHub • DrCas</div>
-          <div class="card-subtitle">repos & commits</div>
-        </a>
-        <a class="card link" href="https://admin.drcastiel.com" target="_blank" rel="noreferrer">
-          <div class="card-title">Admin Portal</div>
-          <div class="card-subtitle">jobs, orders, users</div>
-        </a>
-        <a class="card link" href="https://dev.drcastiel.com" target="_blank" rel="noreferrer">
-          <div class="card-title">Crown Dev Site</div>
-          <div class="card-subtitle">static marketing pages</div>
-        </a>
       </div>
     </section>
 

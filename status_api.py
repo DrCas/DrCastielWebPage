@@ -23,13 +23,16 @@ Security notes
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import ssl
 import time
 import shutil
 import subprocess
+import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, jsonify
@@ -41,6 +44,11 @@ except Exception:  # pragma: no cover
 
 
 bp = Blueprint("status_api", __name__)
+
+UPTIME_HISTORY_FILE = Path(__file__).with_name("uptime_history.json")
+UPTIME_SAMPLE_SECONDS = 15 * 60
+UPTIME_RETENTION_SECONDS = 30 * 24 * 60 * 60
+_UPTIME_LOCK = threading.Lock()
 
 PUBLIC_ENDPOINTS = [
     {"id": "dev", "name": "Crown Dev Site", "url": "https://dev.drcastiel.com"},
@@ -194,6 +202,63 @@ def _health(mem: Optional[Dict[str, Any]], disk: Optional[Dict[str, Any]], temp_
         return "bad"
     return "warn"
 
+def _load_uptime_history() -> Dict[str, list[Dict[str, Any]]]:
+    if not UPTIME_HISTORY_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(UPTIME_HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: Dict[str, list[Dict[str, Any]]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, list):
+            continue
+        entries: list[Dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            ts = item.get("ts")
+            ok = item.get("ok")
+            if isinstance(ts, (int, float)):
+                entries.append({"ts": int(ts), "ok": bool(ok)})
+        if entries:
+            normalized[key] = entries
+    return normalized
+
+def _save_uptime_history(history: Dict[str, list[Dict[str, Any]]]) -> None:
+    try:
+        UPTIME_HISTORY_FILE.write_text(json.dumps(history, separators=(",", ":")), encoding="utf-8")
+    except Exception:
+        return
+
+def _apply_uptime_history(endpoint_results: list[Dict[str, Any]]) -> None:
+    now_ts = int(time.time())
+    cutoff = now_ts - UPTIME_RETENTION_SECONDS
+
+    with _UPTIME_LOCK:
+        history = _load_uptime_history()
+
+        for endpoint in endpoint_results:
+            endpoint_id = endpoint["id"]
+            entries = history.get(endpoint_id, [])
+            entries = [entry for entry in entries if int(entry.get("ts", 0)) >= cutoff]
+
+            last_ts = int(entries[-1]["ts"]) if entries else None
+            if last_ts is None or (now_ts - last_ts) >= UPTIME_SAMPLE_SECONDS:
+                entries.append({"ts": now_ts, "ok": bool(endpoint.get("ok"))})
+
+            history[endpoint_id] = entries
+
+            total = len(entries)
+            up_count = sum(1 for entry in entries if bool(entry.get("ok")))
+            endpoint["uptime_30d_pct"] = round((up_count / total) * 100.0, 3) if total > 0 else None
+            endpoint["samples_30d"] = total
+
+        _save_uptime_history(history)
+
 def _probe_http(url: str, timeout: float = 2.5) -> Dict[str, Any]:
     started = time.perf_counter()
     req = urllib.request.Request(
@@ -256,6 +321,7 @@ def _public_endpoint_status() -> list[Dict[str, Any]]:
             "url": endpoint["url"],
             **endpoint_result,
         })
+    _apply_uptime_history(ordered)
     return ordered
 
 
@@ -278,6 +344,7 @@ def api_status():
             "uptime_seconds": uptime_s,
             "uptime_human": _human_uptime(uptime_s),
             "cpu_temp_c": temp_c,
+            "cpu_count": os.cpu_count(),
             "load_1m": _load_1m(),
             "mem": mem,
             "disk": disk,

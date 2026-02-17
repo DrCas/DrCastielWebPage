@@ -25,6 +25,7 @@ const CONFIG = {
 };
 
 function el(id){ return document.getElementById(id); }
+function clamp(n, min, max){ return Math.min(max, Math.max(min, n)); }
 function fmtBytes(n){
   if (n == null) return "—";
   const units = ["B","KB","MB","GB","TB"];
@@ -84,9 +85,14 @@ function renderServices(){
           <div class="label">Latency</div>
           <div id="lat-${s.id}" class="value mono">—</div>
         </div>
+        <div class="metric" style="grid-column:1 / -1;">
+          <div class="label">30d Uptime (15m samples)</div>
+          <div class="progress"><span id="uptimebar-${s.id}" class="progress-fill"></span></div>
+        </div>
       </div>
-      <div style="margin-top:12px;">
+      <div class="service-footer">
         <a class="pill" href="${s.url}" target="_blank" rel="noreferrer">Open</a>
+        <span id="uptime-inline-${s.id}" class="uptime-inline mono">—</span>
       </div>
     `;
     host.appendChild(card);
@@ -113,7 +119,12 @@ function renderProjects(){
 }
 
 function setText(id, txt){ const node = el(id); if (node) node.textContent = txt; }
-function setHtml(id, html){ const node = el(id); if (node) node.innerHTML = html; }
+function setProgress(id, pct){
+  const node = el(id);
+  if (!node) return;
+  const width = Number.isFinite(pct) ? clamp(pct, 0, 100) : 0;
+  node.style.width = `${width.toFixed(0)}%`;
+}
 function setBadge(node, txt, cls){
   if (!node) return;
   node.textContent = txt;
@@ -132,6 +143,9 @@ function renderServiceStatusFromApi(data){
 
     setText(`reach-${service.id}`, endpoint.ok ? "yes" : "no");
     setText(`lat-${service.id}`, endpoint.latency_ms != null ? `${endpoint.latency_ms} ms` : "—");
+    const uptime = endpoint.uptime_30d_pct;
+    setText(`uptime-inline-${service.id}`, typeof uptime === "number" ? `${uptime.toFixed(3)}%` : "—");
+    setProgress(`uptimebar-${service.id}`, typeof uptime === "number" ? uptime : null);
 
     const badge = badgeForEndpoint(endpoint);
     setBadge(el(`badge-${service.id}`), badge.text, badge.cls);
@@ -143,14 +157,36 @@ function renderServiceStatusFromApi(data){
 function renderPi(data){
   // Basic fields (API may return nulls)
   setText("piUptime", data?.pi?.uptime_human ?? "—");
+  const uptimeSeconds = data?.pi?.uptime_seconds;
+  const piUptimePct = Number.isFinite(uptimeSeconds)
+    ? Math.min((Number(uptimeSeconds) / (30 * 24 * 60 * 60)) * 100, 100)
+    : null;
+  setProgress("meterPiUptime", piUptimePct);
+  setText("piUptimePct", Number.isFinite(piUptimePct) ? `${piUptimePct.toFixed(2)}% / 30d` : "—");
+
   setText("cpuTemp",  data?.pi?.cpu_temp_c != null ? `${data.pi.cpu_temp_c.toFixed(1)}°C` : "—");
   setText("cpuLoad",  data?.pi?.load_1m != null ? `${data.pi.load_1m.toFixed(2)} (1m)` : "—");
+
+  const cpuTempPct = data?.pi?.cpu_temp_c != null ? (data.pi.cpu_temp_c / 85) * 100 : null;
+  setProgress("meterCpuTemp", cpuTempPct);
+
+  const cpuCount = data?.pi?.cpu_count ?? null;
+  const loadPct = (data?.pi?.load_1m != null && cpuCount) ? (data.pi.load_1m / cpuCount) * 100 : null;
+  setProgress("meterCpuLoad", loadPct);
+
   if (data?.pi?.mem){
     setText("mem", `${fmtPct(data.pi.mem.used_pct)} • ${fmtBytes(data.pi.mem.used_bytes)} / ${fmtBytes(data.pi.mem.total_bytes)}`);
+    setProgress("meterMem", data.pi.mem.used_pct);
   }else setText("mem", "—");
+
   if (data?.pi?.disk){
     setText("disk", `${fmtPct(data.pi.disk.used_pct)} • ${fmtBytes(data.pi.disk.used_bytes)} / ${fmtBytes(data.pi.disk.total_bytes)}`);
+    setProgress("meterDisk", data.pi.disk.used_pct);
   }else setText("disk", "—");
+
+  if (!data?.pi?.mem) setProgress("meterMem", null);
+  if (!data?.pi?.disk) setProgress("meterDisk", null);
+
   if (data?.pi?.net){
     setText("net", `↑ ${fmtBytes(data.pi.net.tx_bytes)} • ↓ ${fmtBytes(data.pi.net.rx_bytes)}`);
   }else setText("net", "—");
@@ -194,6 +230,8 @@ async function refresh(){
       const result = await pingUrl(service.url);
       setText(`reach-${service.id}`, result.ok ? "yes" : "no");
       setText(`lat-${service.id}`, result.ms != null ? `${result.ms} ms` : "—");
+      setText(`uptime-inline-${service.id}`, "—");
+      setProgress(`uptimebar-${service.id}`, null);
       const badge = el(`badge-${service.id}`);
       if (result.ok) setBadge(badge, "UP", "good");
       else setBadge(badge, "DOWN", "bad");
