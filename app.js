@@ -42,6 +42,12 @@ function badgeFromHealth(h){
   return { text:"—", cls:"" };
 }
 
+function badgeForEndpoint(endpoint){
+  if (!endpoint) return { text: "—", cls: "" };
+  if (endpoint.ok) return { text: "UP", cls: "good" };
+  return { text: "DOWN", cls: "bad" };
+}
+
 async function pingUrl(url){
   const t0 = performance.now();
   try{
@@ -115,6 +121,25 @@ function setBadge(node, txt, cls){
   if (cls) node.classList.add(cls);
 }
 
+function renderServiceStatusFromApi(data){
+  const endpointList = data?.public_endpoints;
+  if (!Array.isArray(endpointList)) return false;
+
+  const endpointById = Object.fromEntries(endpointList.map((item) => [item.id, item]));
+  for (const service of CONFIG.services){
+    const endpoint = endpointById[service.id];
+    if (!endpoint) continue;
+
+    setText(`reach-${service.id}`, endpoint.ok ? "yes" : "no");
+    setText(`lat-${service.id}`, endpoint.latency_ms != null ? `${endpoint.latency_ms} ms` : "—");
+
+    const badge = badgeForEndpoint(endpoint);
+    setBadge(el(`badge-${service.id}`), badge.text, badge.cls);
+  }
+
+  return true;
+}
+
 function renderPi(data){
   // Basic fields (API may return nulls)
   setText("piUptime", data?.pi?.uptime_human ?? "—");
@@ -145,28 +170,37 @@ function renderPi(data){
 }
 
 async function refresh(){
-  // 1) Render URL pings
-  await Promise.all(CONFIG.services.map(async (s) => {
-    const r = await pingUrl(s.url);
-    setText(`reach-${s.id}`, r.ok ? "yes" : "no");
-    setText(`lat-${s.id}`, r.ms != null ? `${r.ms} ms` : "—");
-    const badge = el(`badge-${s.id}`);
-    if (r.ok) setBadge(badge, "UP", "good");
-    else setBadge(badge, "DOWN", "bad");
-  }));
+  const refreshBtn = el("refreshBtn");
+  if (refreshBtn) refreshBtn.disabled = true;
 
-  // 2) Pull server-side status (preferred)
+  // Pull server-side status first (preferred)
+  let renderedFromApi = false;
   try{
     const res = await fetch("/api/status", { cache: "no-store" });
     if (res.ok){
       const data = await res.json();
       renderPi(data);
+      renderedFromApi = renderServiceStatusFromApi(data);
     }else{
       renderPi(null);
     }
   }catch(e){
     renderPi(null);
   }
+
+  // Fallback to browser pings if API endpoint probes are unavailable.
+  if (!renderedFromApi){
+    await Promise.all(CONFIG.services.map(async (service) => {
+      const result = await pingUrl(service.url);
+      setText(`reach-${service.id}`, result.ok ? "yes" : "no");
+      setText(`lat-${service.id}`, result.ms != null ? `${result.ms} ms` : "—");
+      const badge = el(`badge-${service.id}`);
+      if (result.ok) setBadge(badge, "UP", "good");
+      else setBadge(badge, "DOWN", "bad");
+    }));
+  }
+
+  if (refreshBtn) refreshBtn.disabled = false;
 }
 
 function boot(){

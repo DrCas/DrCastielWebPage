@@ -22,12 +22,14 @@ Security notes
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
+import ssl
 import time
-import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+import urllib.error
+import urllib.request
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, jsonify
@@ -39,6 +41,12 @@ except Exception:  # pragma: no cover
 
 
 bp = Blueprint("status_api", __name__)
+
+PUBLIC_ENDPOINTS = [
+    {"id": "dev", "name": "Crown Dev Site", "url": "https://dev.drcastiel.com"},
+    {"id": "admin", "name": "Admin Portal", "url": "https://admin.drcastiel.com"},
+    {"id": "home", "name": "DrCastiel Home", "url": "https://drcastiel.com"},
+]
 
 
 # ------------------------------
@@ -186,6 +194,70 @@ def _health(mem: Optional[Dict[str, Any]], disk: Optional[Dict[str, Any]], temp_
         return "bad"
     return "warn"
 
+def _probe_http(url: str, timeout: float = 2.5) -> Dict[str, Any]:
+    started = time.perf_counter()
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"User-Agent": "DrCastielStatus/1.0"},
+    )
+    context = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
+            status = int(getattr(resp, "status", 0) or 0)
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            return {
+                "ok": 200 <= status < 500,
+                "http_status": status,
+                "latency_ms": latency_ms,
+                "error": None,
+            }
+    except urllib.error.HTTPError as err:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        status = int(getattr(err, "code", 0) or 0)
+        return {
+            "ok": 200 <= status < 500,
+            "http_status": status or None,
+            "latency_ms": latency_ms,
+            "error": None,
+        }
+    except Exception as err:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        return {
+            "ok": False,
+            "http_status": None,
+            "latency_ms": latency_ms,
+            "error": str(err),
+        }
+
+def _public_endpoint_status() -> list[Dict[str, Any]]:
+    results_by_id: Dict[str, Dict[str, Any]] = {}
+
+    def _check(endpoint: Dict[str, str]) -> tuple[str, Dict[str, Any]]:
+        return endpoint["id"], _probe_http(endpoint["url"])
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(PUBLIC_ENDPOINTS), 4)) as pool:
+        futures = [pool.submit(_check, endpoint) for endpoint in PUBLIC_ENDPOINTS]
+        for future in concurrent.futures.as_completed(futures):
+            endpoint_id, result = future.result()
+            results_by_id[endpoint_id] = result
+
+    ordered = []
+    for endpoint in PUBLIC_ENDPOINTS:
+        endpoint_result = results_by_id.get(endpoint["id"], {
+            "ok": False,
+            "http_status": None,
+            "latency_ms": None,
+            "error": "Probe failed",
+        })
+        ordered.append({
+            "id": endpoint["id"],
+            "name": endpoint["name"],
+            "url": endpoint["url"],
+            **endpoint_result,
+        })
+    return ordered
+
 
 # ------------------------------
 # Route
@@ -201,6 +273,7 @@ def api_status():
 
     payload = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "public_endpoints": _public_endpoint_status(),
         "pi": {
             "uptime_seconds": uptime_s,
             "uptime_human": _human_uptime(uptime_s),
