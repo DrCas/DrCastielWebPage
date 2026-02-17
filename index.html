@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DrCastiel • Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg">
+    <div class="grain"></div>
+    <div class="glow glow-a"></div>
+    <div class="glow glow-b"></div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">DC</div>
+      <div class="brand-text">
+        <div class="title">DrCastiel</div>
+        <div class="subtitle">Home dashboard • status • projects</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="navlink" href="#status">Status</a>
+      <a class="navlink" href="#projects">Projects</a>
+      <a class="navlink" href="#ops">Ops</a>
+      <a class="navlink" href="#notes">Notes</a>
+    </nav>
+
+    <div class="actions">
+      <button id="refreshBtn" class="btn">Refresh</button>
+      <span id="lastUpdated" class="meta">—</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <div class="hero-left">
+        <h1>Everything you care about.<br><span class="accent">One page.</span></h1>
+        <p class="lede">
+          Uptime, service health, and fast links to the stuff you actually use.
+          Built for your Pi stack + Cloudflare Tunnel + Gunicorn.
+        </p>
+        <div class="quicklinks">
+          <a class="pill" href="https://dev.drcastiel.com" target="_blank" rel="noreferrer">dev.drcastiel.com</a>
+          <a class="pill" href="https://admin.drcastiel.com" target="_blank" rel="noreferrer">admin.drcastiel.com</a>
+          <a class="pill" href="https://github.com/DrCas/Crown-Webpage" target="_blank" rel="noreferrer">Crown Repo</a>
+          <a class="pill" href="#projects">All projects</a>
+        </div>
+      </div>
+
+      <div class="hero-right">
+        <div class="card big">
+          <div class="card-head">
+            <div>
+              <div class="card-title">Pi Health</div>
+              <div class="card-subtitle">Live system snapshot</div>
+            </div>
+            <span id="piBadge" class="badge">—</span>
+          </div>
+
+          <div class="grid metrics">
+            <div class="metric">
+              <div class="label">Uptime</div>
+              <div id="piUptime" class="value mono">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">CPU Temp</div>
+              <div id="cpuTemp" class="value mono">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">CPU Load</div>
+              <div id="cpuLoad" class="value mono">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">Memory</div>
+              <div id="mem" class="value mono">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">Disk</div>
+              <div id="disk" class="value mono">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">Network</div>
+              <div id="net" class="value mono">—</div>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="row">
+            <div class="mini">
+              <div class="label">Cloudflared</div>
+              <div id="svcCloudflared" class="value mono">—</div>
+            </div>
+            <div class="mini">
+              <div class="label">Gunicorn (Admin)</div>
+              <div id="svcGunicorn" class="value mono">—</div>
+            </div>
+            <div class="mini">
+              <div class="label">Nginx</div>
+              <div id="svcNginx" class="value mono">—</div>
+            </div>
+          </div>
+
+          <div class="hint">
+            Source: <code>/api/status</code> (local) • <span class="muted">Auto refresh every 15s</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="status" class="section">
+      <div class="section-head">
+        <h2>Service Status</h2>
+        <p>Checks your public endpoints + local services (if you enable the API).</p>
+      </div>
+
+      <div class="grid cards" id="serviceCards">
+        <!-- cards injected by JS -->
+      </div>
+    </section>
+
+    <section id="projects" class="section">
+      <div class="section-head">
+        <h2>Projects</h2>
+        <p>Pin the stuff you're actively building. Add/rename in <code>app.js</code>.</p>
+      </div>
+
+      <div class="grid cards" id="projectCards">
+        <!-- cards injected by JS -->
+      </div>
+    </section>
+
+    <section id="ops" class="section">
+      <div class="section-head">
+        <h2>Ops Shortcuts</h2>
+        <p>Buttons that jump you straight into the boring but necessary stuff.</p>
+      </div>
+
+      <div class="grid cards">
+        <a class="card link" href="https://dash.cloudflare.com" target="_blank" rel="noreferrer">
+          <div class="card-title">Cloudflare Dashboard</div>
+          <div class="card-subtitle">tunnels, DNS, firewall, cache</div>
+        </a>
+        <a class="card link" href="https://github.com/DrCas" target="_blank" rel="noreferrer">
+          <div class="card-title">GitHub • DrCas</div>
+          <div class="card-subtitle">repos & commits</div>
+        </a>
+        <a class="card link" href="https://admin.drcastiel.com" target="_blank" rel="noreferrer">
+          <div class="card-title">Admin Portal</div>
+          <div class="card-subtitle">jobs, orders, users</div>
+        </a>
+        <a class="card link" href="https://dev.drcastiel.com" target="_blank" rel="noreferrer">
+          <div class="card-title">Crown Dev Site</div>
+          <div class="card-subtitle">static marketing pages</div>
+        </a>
+      </div>
+    </section>
+
+    <section id="notes" class="section">
+      <div class="section-head">
+        <h2>Notes</h2>
+        <p>A tiny “what’s next” box so you stop opening 12 tabs.</p>
+      </div>
+
+      <div class="card note">
+        <ul id="todoList">
+          <li>Finish drcastiel.com dashboard deployment</li>
+          <li>Stabilize Admin Portal job view layout (left + right boxes always)</li>
+          <li>Order pipeline: form → API → DB → email + PDF</li>
+          <li>Set up backups (DB + uploads) + quick restore script</li>
+        </ul>
+        <div class="hint muted">Edit this list in <code>index.html</code>.</div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span class="muted">DrCastiel Dashboard</span>
+      <span class="dot">•</span>
+      <span class="muted">Built for your Pi + tunnels</span>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

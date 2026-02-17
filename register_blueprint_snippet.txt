@@ -1,0 +1,6 @@
+# In your Admin-Portal/app.py (or factory), add:
+
+from status_api import bp as status_api_bp
+app.register_blueprint(status_api_bp)
+
+# Make sure status_api.py is in the same folder as app.py (or adjust import).
