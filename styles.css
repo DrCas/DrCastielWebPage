@@ -191,10 +191,17 @@ body{
   width: 0%;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent), var(--accent-soft));
-  transition: width .25s ease;
+  transition: width .25s ease, background-color .25s ease;
 }
-.metric .progress-fill{
-  background: linear-gradient(90deg, #39d98a 0 72%, #ff5c7a 72% 100%);
+/* Color-coded progress bars based on health */
+.progress-fill.good{
+  background: linear-gradient(90deg, #39d98a, #2db87e);
+}
+.progress-fill.warn{
+  background: linear-gradient(90deg, #ffcc66, #ffc93f);
+}
+.progress-fill.bad{
+  background: linear-gradient(90deg, #ff5c7a, #ff3f52);
 }
 .mono{ font-family: var(--mono); letter-spacing: .2px; }
 .row{ display:flex; gap: 12px; }

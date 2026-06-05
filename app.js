@@ -24,8 +24,18 @@ const CONFIG = {
   ]
 };
 
+// Health thresholds for progress bars and metrics
+const THRESHOLDS = {
+  uptime: { good: 95, warn: 90 },      // % uptime
+  temp: { good: 70, warn: 80 },        // °C
+  load: { good: 0.8, warn: 1.2 },      // factor of cpu_count
+  memory: { good: 80, warn: 90 },      // % used
+  disk: { good: 80, warn: 90 },        // % used
+};
+
 function el(id){ return document.getElementById(id); }
 function clamp(n, min, max){ return Math.min(max, Math.max(min, n)); }
+
 function fmtBytes(n){
   if (n == null) return "—";
   const units = ["B","KB","MB","GB","TB"];
@@ -33,7 +43,16 @@ function fmtBytes(n){
   while (v >= 1024 && i < units.length-1){ v/=1024; i++; }
   return `${v.toFixed(i===0?0:1)} ${units[i]}`;
 }
+
 function fmtPct(n){ return (n == null) ? "—" : `${Math.round(n)}%`; }
+
+// Determine color class based on value and thresholds
+function colorForMetric(value, threshold){
+  if (value == null) return "";
+  if (value >= threshold.warn) return "bad";
+  if (value >= threshold.good) return "warn";
+  return "good";
+}
 
 function badgeFromHealth(h){
   const t = (h || "unknown").toLowerCase();
@@ -140,12 +159,17 @@ function renderProjects(){
 }
 
 function setText(id, txt){ const node = el(id); if (node) node.textContent = txt; }
-function setProgress(id, pct){
+
+function setProgress(id, pct, colorClass){
   const node = el(id);
   if (!node) return;
   const width = Number.isFinite(pct) ? clamp(pct, 0, 100) : 0;
   node.style.width = `${width.toFixed(0)}%`;
+  // Remove existing color classes and apply new one
+  node.classList.remove("good", "warn", "bad");
+  if (colorClass) node.classList.add(colorClass);
 }
+
 function setBadge(node, txt, cls){
   if (!node) return;
   node.textContent = txt;
@@ -164,9 +188,16 @@ function renderServiceStatusFromApi(data){
 
     setText(`reach-${service.id}`, endpoint.ok ? "yes" : "no");
     setText(`lat-${service.id}`, endpoint.latency_ms != null ? `${endpoint.latency_ms} ms` : "—");
+    
+    // 30d Uptime with color-coded progress bar
     const uptime = endpoint.uptime_30d_pct;
-    setText(`uptime-inline-${service.id}`, typeof uptime === "number" ? `${uptime.toFixed(3)}%` : "—");
-    setProgress(`uptimebar-${service.id}`, typeof uptime === "number" ? uptime : null);
+    setText(`uptime-inline-${service.id}`, typeof uptime === "number" ? `${uptime.toFixed(1)}%` : "—");
+    if (typeof uptime === "number") {
+      const color = colorForMetric(uptime, THRESHOLDS.uptime);
+      setProgress(`uptimebar-${service.id}`, uptime, color);
+    } else {
+      setProgress(`uptimebar-${service.id}`, null);
+    }
 
     const badge = badgeForEndpoint(endpoint);
     setBadge(el(`badge-${service.id}`), badge.text, badge.cls);
@@ -185,28 +216,50 @@ function renderPi(data){
   setProgress("meterPiUptime", piUptimePct);
   setText("piUptimePct", Number.isFinite(piUptimePct) ? `${piUptimePct.toFixed(2)}% / 30d` : "—");
 
-  setText("cpuTemp",  data?.pi?.cpu_temp_c != null ? `${data.pi.cpu_temp_c.toFixed(1)}°C` : "—");
-  setText("cpuLoad",  data?.pi?.load_1m != null ? `${data.pi.load_1m.toFixed(2)} (1m)` : "—");
+  // CPU Temperature with color-coded bar
+  const tempC = data?.pi?.cpu_temp_c;
+  setText("cpuTemp", tempC != null ? `${tempC.toFixed(1)}°C` : "—");
+  if (tempC != null) {
+    const tempPct = (tempC / 85) * 100;
+    const tempColor = colorForMetric(tempC, THRESHOLDS.temp);
+    setProgress("meterCpuTemp", tempPct, tempColor);
+  } else {
+    setProgress("meterCpuTemp", null);
+  }
 
-  const cpuTempPct = data?.pi?.cpu_temp_c != null ? (data.pi.cpu_temp_c / 85) * 100 : null;
-  setProgress("meterCpuTemp", cpuTempPct);
-
+  // CPU Load with color-coded bar
+  const load = data?.pi?.load_1m;
   const cpuCount = data?.pi?.cpu_count ?? null;
-  const loadPct = (data?.pi?.load_1m != null && cpuCount) ? (data.pi.load_1m / cpuCount) * 100 : null;
-  setProgress("meterCpuLoad", loadPct);
+  setText("cpuLoad", load != null ? `${load.toFixed(2)} (1m)` : "—");
+  if (load != null && cpuCount) {
+    const loadPct = (load / cpuCount) * 100;
+    const loadColor = colorForMetric(load, THRESHOLDS.load);
+    setProgress("meterCpuLoad", loadPct, loadColor);
+  } else {
+    setProgress("meterCpuLoad", null);
+  }
 
-  if (data?.pi?.mem){
-    setText("mem", `${fmtPct(data.pi.mem.used_pct)} • ${fmtBytes(data.pi.mem.used_bytes)} / ${fmtBytes(data.pi.mem.total_bytes)}`);
-    setProgress("meterMem", data.pi.mem.used_pct);
-  }else setText("mem", "—");
+  // Memory with color-coded bar
+  if (data?.pi?.mem) {
+    const memPct = data.pi.mem.used_pct;
+    setText("mem", `${fmtPct(memPct)} • ${fmtBytes(data.pi.mem.used_bytes)} / ${fmtBytes(data.pi.mem.total_bytes)}`);
+    const memColor = colorForMetric(memPct, THRESHOLDS.memory);
+    setProgress("meterMem", memPct, memColor);
+  } else {
+    setText("mem", "—");
+    setProgress("meterMem", null);
+  }
 
-  if (data?.pi?.disk){
-    setText("disk", `${fmtPct(data.pi.disk.used_pct)} • ${fmtBytes(data.pi.disk.used_bytes)} / ${fmtBytes(data.pi.disk.total_bytes)}`);
-    setProgress("meterDisk", data.pi.disk.used_pct);
-  }else setText("disk", "—");
-
-  if (!data?.pi?.mem) setProgress("meterMem", null);
-  if (!data?.pi?.disk) setProgress("meterDisk", null);
+  // Disk with color-coded bar
+  if (data?.pi?.disk) {
+    const diskPct = data.pi.disk.used_pct;
+    setText("disk", `${fmtPct(diskPct)} • ${fmtBytes(data.pi.disk.used_bytes)} / ${fmtBytes(data.pi.disk.total_bytes)}`);
+    const diskColor = colorForMetric(diskPct, THRESHOLDS.disk);
+    setProgress("meterDisk", diskPct, diskColor);
+  } else {
+    setText("disk", "—");
+    setProgress("meterDisk", null);
+  }
 
   if (data?.pi?.net){
     setText("net", `↑ ${fmtBytes(data.pi.net.tx_bytes)} • ↓ ${fmtBytes(data.pi.net.rx_bytes)}`);
@@ -228,7 +281,10 @@ function renderPi(data){
 
 async function refresh(){
   const refreshBtn = el("refreshBtn");
-  if (refreshBtn) refreshBtn.disabled = true;
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = "Refreshing…";
+  }
 
   // Pull server-side status first (preferred)
   let renderedFromApi = false;
@@ -257,13 +313,24 @@ async function refresh(){
     }));
   }
 
-  if (refreshBtn) refreshBtn.disabled = false;
+  if (refreshBtn) {
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = "Refresh";
+  }
 }
 
 function boot(){
   renderServices();
   renderProjects();
-  el("refreshBtn")?.addEventListener("click", refresh);
+  
+  // Refresh button
+  const refreshBtn = el("refreshBtn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", refresh);
+    refreshBtn.title = "Click to manually refresh data";
+  }
+  
+  // Initial load and auto-refresh
   refresh();
   setInterval(refresh, CONFIG.refreshMs);
 }
