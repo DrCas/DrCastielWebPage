@@ -26,11 +26,11 @@ const CONFIG = {
 
 // Health thresholds for progress bars and metrics
 const THRESHOLDS = {
-  uptime: { good: 95, warn: 90 },      // % uptime
-  temp: { good: 70, warn: 80 },        // °C
-  load: { good: 0.8, warn: 1.2 },      // factor of cpu_count
-  memory: { good: 80, warn: 90 },      // % used
-  disk: { good: 80, warn: 90 },        // % used
+  uptime: { good: 95, warn: 90 },      // % uptime (higher is better)
+  temp: { warn: 70, bad: 80 },         // °C (lower is better)
+  load: { warn: 0.8, bad: 1.2 },       // factor of cpu_count (lower is better)
+  memory: { warn: 80, bad: 90 },       // % used (lower is better)
+  disk: { warn: 80, bad: 90 },         // % used (lower is better)
 };
 
 function el(id){ return document.getElementById(id); }
@@ -47,11 +47,21 @@ function fmtBytes(n){
 function fmtPct(n){ return (n == null) ? "—" : `${Math.round(n)}%`; }
 
 // Determine color class based on value and thresholds
-function colorForMetric(value, threshold){
+// higherIsBetter: true for uptime (higher%), false for temp/load/memory/disk
+function colorForMetric(value, threshold, higherIsBetter = false){
   if (value == null) return "";
-  if (value >= threshold.warn) return "bad";
-  if (value >= threshold.good) return "warn";
-  return "good";
+  
+  if (higherIsBetter) {
+    // Uptime: higher is better. Bad if < warn, warn if < good, good if >= good
+    if (value < threshold.warn) return "bad";
+    if (value < threshold.good) return "warn";
+    return "good";
+  } else {
+    // Temp/Load/Memory/Disk: lower is better. Good if < warn, warn if < bad, bad if >= bad
+    if (value >= threshold.bad) return "bad";
+    if (value >= threshold.warn) return "warn";
+    return "good";
+  }
 }
 
 function badgeFromHealth(h){
@@ -189,11 +199,11 @@ function renderServiceStatusFromApi(data){
     setText(`reach-${service.id}`, endpoint.ok ? "yes" : "no");
     setText(`lat-${service.id}`, endpoint.latency_ms != null ? `${endpoint.latency_ms} ms` : "—");
     
-    // 30d Uptime with color-coded progress bar
+    // 30d Uptime with color-coded progress bar (higher is better)
     const uptime = endpoint.uptime_30d_pct;
     setText(`uptime-inline-${service.id}`, typeof uptime === "number" ? `${uptime.toFixed(1)}%` : "—");
     if (typeof uptime === "number") {
-      const color = colorForMetric(uptime, THRESHOLDS.uptime);
+      const color = colorForMetric(uptime, THRESHOLDS.uptime, true); // higherIsBetter=true
       setProgress(`uptimebar-${service.id}`, uptime, color);
     } else {
       setProgress(`uptimebar-${service.id}`, null);
@@ -216,45 +226,45 @@ function renderPi(data){
   setProgress("meterPiUptime", piUptimePct);
   setText("piUptimePct", Number.isFinite(piUptimePct) ? `${piUptimePct.toFixed(2)}% / 30d` : "—");
 
-  // CPU Temperature with color-coded bar
+  // CPU Temperature with color-coded bar (lower is better)
   const tempC = data?.pi?.cpu_temp_c;
   setText("cpuTemp", tempC != null ? `${tempC.toFixed(1)}°C` : "—");
   if (tempC != null) {
     const tempPct = (tempC / 85) * 100;
-    const tempColor = colorForMetric(tempC, THRESHOLDS.temp);
+    const tempColor = colorForMetric(tempC, THRESHOLDS.temp, false); // higherIsBetter=false
     setProgress("meterCpuTemp", tempPct, tempColor);
   } else {
     setProgress("meterCpuTemp", null);
   }
 
-  // CPU Load with color-coded bar
+  // CPU Load with color-coded bar (lower is better)
   const load = data?.pi?.load_1m;
   const cpuCount = data?.pi?.cpu_count ?? null;
   setText("cpuLoad", load != null ? `${load.toFixed(2)} (1m)` : "—");
   if (load != null && cpuCount) {
     const loadPct = (load / cpuCount) * 100;
-    const loadColor = colorForMetric(load, THRESHOLDS.load);
+    const loadColor = colorForMetric(load, THRESHOLDS.load, false); // higherIsBetter=false
     setProgress("meterCpuLoad", loadPct, loadColor);
   } else {
     setProgress("meterCpuLoad", null);
   }
 
-  // Memory with color-coded bar
+  // Memory with color-coded bar (lower is better)
   if (data?.pi?.mem) {
     const memPct = data.pi.mem.used_pct;
     setText("mem", `${fmtPct(memPct)} • ${fmtBytes(data.pi.mem.used_bytes)} / ${fmtBytes(data.pi.mem.total_bytes)}`);
-    const memColor = colorForMetric(memPct, THRESHOLDS.memory);
+    const memColor = colorForMetric(memPct, THRESHOLDS.memory, false); // higherIsBetter=false
     setProgress("meterMem", memPct, memColor);
   } else {
     setText("mem", "—");
     setProgress("meterMem", null);
   }
 
-  // Disk with color-coded bar
+  // Disk with color-coded bar (lower is better)
   if (data?.pi?.disk) {
     const diskPct = data.pi.disk.used_pct;
     setText("disk", `${fmtPct(diskPct)} • ${fmtBytes(data.pi.disk.used_bytes)} / ${fmtBytes(data.pi.disk.total_bytes)}`);
-    const diskColor = colorForMetric(diskPct, THRESHOLDS.disk);
+    const diskColor = colorForMetric(diskPct, THRESHOLDS.disk, false); // higherIsBetter=false
     setProgress("meterDisk", diskPct, diskColor);
   } else {
     setText("disk", "—");
