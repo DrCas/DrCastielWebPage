@@ -49,6 +49,8 @@ function badgeForEndpoint(endpoint){
   return { text: "DOWN", cls: "bad" };
 }
 
+const STATUS_API_PATH = new URL("api/status", window.location.href).href;
+
 async function pingUrl(url){
   const t0 = performance.now();
   try{
@@ -212,7 +214,7 @@ async function refresh(){
   // Pull server-side status first (preferred)
   let renderedFromApi = false;
   try{
-    const res = await fetch("/api/status", { cache: "no-store" });
+    const res = await fetch(STATUS_API_PATH, { cache: "no-store" });
     if (res.ok){
       const data = await res.json();
       renderPi(data);
@@ -221,6 +223,7 @@ async function refresh(){
       renderPi(null);
     }
   }catch(e){
+    console.warn("Status API fetch failed:", e);
     renderPi(null);
   }
 
