@@ -1,0 +1,18 @@
+[Unit]
+Description=Private CasaOS app port %i
+PartOf=tailscaled.service
+DefaultDependencies=no
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Socket]
+ListenStream=100.71.117.23:%i
+BindToDevice=tailscale0
+FreeBind=yes
+NoDelay=yes
+
+[Install]
+WantedBy=multi-user.target
+
