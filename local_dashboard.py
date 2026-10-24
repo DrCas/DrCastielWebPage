@@ -1,10 +1,12 @@
 from pathlib import Path
 from flask import Flask, send_from_directory
 from dashboard_api import api
+from servers_api import servers_api
 
 ROOT = Path(__file__).parent
 app = Flask(__name__, static_folder=None)
 app.register_blueprint(api)
+app.register_blueprint(servers_api)
 
 @app.after_request
 def headers(response):
@@ -22,11 +24,13 @@ def healthz(): return {'ok': True}
 @app.get('/domains/<hostname>')
 @app.get('/projects')
 @app.get('/projects/<name>')
+@app.get('/servers')
+@app.get('/servers/<server_id>')
 def index(**kwargs): return send_from_directory(ROOT, 'index.html')
 
 @app.get('/<asset>')
 def asset(asset):
-    if asset not in ('styles.css', 'app.js', 'favicon.svg'):
+    if asset not in ('styles.css', 'app.js', 'servers.js', 'favicon.svg'):
         return {'error': 'Not found'}, 404
     return send_from_directory(ROOT, asset)
 

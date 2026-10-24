@@ -1,6 +1,6 @@
 # DrCastiel dashboard
 
-A Flask dashboard with Overview, Domains, and Projects pages.
+A Flask dashboard with Overview, Servers, Domains, and Projects pages.
 
 - Overview reads Pi host metrics and private CasaOS Netdata metrics every 15 seconds.
 - Domains sync from Cloudflare DNS every 5 minutes and are checked independently every minute.
@@ -26,7 +26,7 @@ Server readings come from the existing Netdata endpoint over Tailscale, http://1
 
 Install requirements.txt and run local_dashboard.py. Set DASHBOARD_STATE to a directory containing monitor snapshots and dashboard.sqlite3 to use real monitoring data. The web process only reads the database. Production monitoring requires Linux and should not be started on a development Windows computer.
 
-Checks: python -m unittest -v test_dashboard; node --check app.js
+Checks: python -m unittest -v test_dashboard test_servers; node --check app.js; node --check servers.js
 
 ## Deployment and rollback
 
@@ -51,4 +51,16 @@ The certificate is at /etc/letsencrypt/live/casa.drcastiel.com/fullchain.pem; it
 
 Validate with `sudo nginx -t -c /etc/drcastiel/casa-nginx.conf`, `sudo systemctl status drcastiel-casa`, and `sudo certbot renew --dry-run --cert-name casa.drcastiel.com --run-deploy-hooks --no-random-sleep-on-renew`. DNS and prior gateway configuration backups are under /mnt/ssd/docker/web-stack/backups/casa-https-20261023-200911.
 
-CasaOS launches several apps using the current hostname and their original ports. To preserve these shortcuts after the HTTPS hostname moves to the Pi, the casa-app@.socket/service templates relay ports 19999 (Netdata), 8111 (Crafty), 9443 (Portainer), and 8384 (Syncthing) to the same ports on CasServer. The sockets bind only to the Pi's Tailscale address AND tailscale0 interface, run unprivileged socket-proxy services on demand, and restart with tailscaled. App protocols/certificates pass through unchanged. These relays do not expose public listeners or replace the apps' own TLS certificates. Netdata and Syncthing were verified HTTP 200; Crafty's original TLS certificate was verified unchanged. The existing Portainer shortcut uses HTTP on port 9443 and returns HTTP 400 both directly and through the relay; its separate protocol configuration is unchanged.
+CasaOS launches apps using the current hostname and their original ports. The casa-app@.socket/service templates relay ports 19999 (Netdata), 9443 (Portainer), and 8384 (Syncthing) to CasServer. These sockets bind to the Pi Tailscale address and tailscale0 only. Crafty on port 8111 instead uses a second TLS server block in the dedicated gateway, with the same trusted public certificate and verified upstream TLS. Its original self-signed origin certificate is pinned at /etc/drcastiel/crafty-origin.pem and its hostname is explicitly validated. If Crafty regenerates that certificate, verify and update the pin and hostname in both the gateway and management configuration before reconnecting; never disable TLS verification. The old casa-app@8111.socket must remain disabled. Preserve $http_host including :8111 when proxying, otherwise Crafty rejects its WebSocket origin. Browser authentication and HTTP 101 were verified. Portainer's existing HTTP shortcut on its HTTPS port remains a separate existing protocol issue.
+
+## Minecraft server management
+
+/servers automatically discovers the servers visible to the dedicated Crafty API key. Each server has status, players, CPU/memory, basic details, recent console output, and start/stop/restart controls. New servers are created in Crafty and appear on the next 10-second poll. Console output polls every 3 seconds, displays only the last 300 lines as plain text, and accepts individual game console commands. No game servers were created during deployment.
+
+All /api/servers routes require a cryptographically verified Cloudflare Access application JWT: fixed team issuer/JWKS URL, RS256 signatures, application audience, expiration, and owner email allowlist. POSTs additionally require an allowed same-site Origin, a JWT-bound HMAC CSRF token, and a unique request ID. Controls allow only start_server, stop_server, restart_server, or Minecraft stdin. Request IDs and brief action metadata are recorded in a separate SQLite database, with cooldowns and duplicate protection. Command contents and credentials are not logged. Responses are private and non-cacheable.
+
+The approved Crafty key has COMMANDS, TERMINAL, and LOGS permissions only, without Full Access. It lives root-only at /etc/drcastiel/crafty-token. Root-only /etc/drcastiel/management.json contains issuer, audiences, owners, origins, csrf_secret, crafty_url, crafty_ca, crafty_hostname, crafty_token, and audit_db. Compose mounts this configuration, the key, and the pinned public certificate read-only at /run/secrets/{management.json,crafty-token,crafty-origin.pem}. The writable audit directory is /var/lib/drcastiel-management mounted at /management; it is separate from the read-only monitoring volume. No key, CSRF secret, Access token, or owner configuration belongs in Git or the Docker build context.
+
+Deployment backup: /mnt/ssd/docker/web-stack/backups/minecraft-20261023-203331/compose.yml; previous image drcastiel-dashboard:before-minecraft. Restore that Compose file and retag the previous image to web-stack-www-site to roll back only www-site with --no-build. The prior deployed source is recoverable from the previous image or Git commit ff447fc. Gateway backup: /etc/drcastiel/casa-nginx.before-crafty.conf (restoring passthrough also requires disabling the 8111 TLS listener before re-enabling its socket).
+
+Validation: 13 automated tests cover existing dashboard behavior, owner/signature/audience/expiry enforcement, CSRF, action allowlists, duplicate prevention, server discovery, console handling, and missing servers. Live validation confirmed verified upstream TLS, a real empty Crafty inventory, successful owner access, HTTP 401 without an Access JWT, and healthy existing containers. Start/stop/restart and stdin use mocked Crafty responses in tests; they still need an end-to-end check once the first real Minecraft server exists.
