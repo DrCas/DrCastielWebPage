@@ -52,6 +52,9 @@ def init_db(db):
     CREATE INDEX IF NOT EXISTS samples_lookup ON samples(hostname,timestamp);
     CREATE TABLE IF NOT EXISTS events(hostname TEXT,timestamp REAL,kind TEXT,message TEXT);
     ''')
+    columns={row[1] for row in db.execute('PRAGMA table_info(domains)')}
+    for column in ('check_scope','access_state'):
+        if column not in columns: db.execute('ALTER TABLE domains ADD COLUMN '+column+' TEXT')
     db.commit()
 
 
@@ -169,29 +172,76 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 
-def probe(item):
-    hostname,url=item; start=time.monotonic(); status=None
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,*args,**kwargs): return None
+
+
+def origin_probe(hostname):
+    # Only probe loopback origins explicitly configured in Nginx or the tunnel.
+    known=set()
+    for path in Path('/etc/nginx/sites-enabled').glob('*'):
+        try:
+            for group in re.findall(r'server_name\s+([^;]+);',path.read_text()): known.update(group.split())
+        except OSError: pass
+    address='http://127.0.0.1/' if hostname in known else None
+    tunnel=Path('/etc/cloudflared/config.yml')
+    if tunnel.exists():
+        current=None
+        for line in tunnel.read_text().splitlines():
+            match=re.match(r'\s*-\s*hostname:\s*[\"\x27]?([a-zA-Z0-9.-]+)',line)
+            if match: current=match.group(1)
+            if current==hostname and line.strip().startswith('service:'):
+                service=line.split(':',1)[1].strip().strip(chr(34)+chr(39))
+                target=urllib.parse.urlsplit(service)
+                if target.scheme=='http' and target.hostname in ('localhost','127.0.0.1') and not target.username:
+                    address=service
+                break
+    if address is None: return None
+    started=time.monotonic()
+    req=urllib.request.Request(address,headers={'Host':hostname,'User-Agent':'DrCastielMonitor/2.0'})
     try:
-        if not public_url(url): return hostname,'private',None,None
-        opener=urllib.request.build_opener(SafeRedirect(),urllib.request.HTTPSHandler(context=ssl.create_default_context()))
-        req=urllib.request.Request(url,headers={'User-Agent':'DrCastielMonitor/2.0'})
+        opener=urllib.request.build_opener(NoRedirect())
         try:
             with opener.open(req,timeout=5) as response: status=response.status
         except urllib.error.HTTPError as error: status=error.code
         state='up' if 200<=status<400 else 'protected' if status in (401,403) else 'down'
+        return state,status,round((time.monotonic()-started)*1000)
+    except Exception: return 'down',None,round((time.monotonic()-started)*1000)
+
+
+def probe(item):
+    hostname,url=item; start=time.monotonic(); status=None; final=url; access='public'; scope='Public HTTPS'
+    try:
+        if not public_url(url): return hostname,'private',None,None,'Private DNS','private'
+        opener=urllib.request.build_opener(SafeRedirect(),urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+        req=urllib.request.Request(url,headers={'User-Agent':'DrCastielMonitor/2.0'})
+        try:
+            with opener.open(req,timeout=5) as response:
+                status=response.status
+                final=response.geturl()
+        except urllib.error.HTTPError as error: status=error.code
+        target=urllib.parse.urlsplit(final)
+        protected=(target.hostname or '').endswith('.cloudflareaccess.com') or target.path.startswith('/cdn-cgi/access/login') or status in (401,403)
+        if protected:
+            access='protected'; state='protected'; scope='Protected edge; origin not verified'
+            origin=origin_probe(hostname)
+            if origin:
+                state,status,latency=origin
+                return hostname,state,status,latency,'Local origin + protected edge',access
+        else: state='up' if 200<=status<400 else 'down'
     except Exception: state='down'
-    return hostname,state,status,round((time.monotonic()-start)*1000)
+    return hostname,state,status,round((time.monotonic()-start)*1000),scope,access
 
 
 def sample_domains(db):
     items=db.execute('SELECT hostname,url FROM domains WHERE enabled=1').fetchall()
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool: results=list(pool.map(probe,items))
     now=time.time()
-    for hostname,state,status,latency in results:
+    for hostname,state,status,latency,scope,access in results:
         previous=db.execute('SELECT state FROM domains WHERE hostname=?',(hostname,)).fetchone()[0]
         if previous!=state: db.execute('INSERT INTO events VALUES(?,?,?,?)',(hostname,now,'status',f'{previous.title()} → {state.title()}'))
-        db.execute('UPDATE domains SET state=?,http_status=?,latency_ms=?,checked_at=?,status_changed_at=CASE WHEN ? THEN ? ELSE status_changed_at END WHERE hostname=?',
-          (state,status,latency,now,previous!=state,now,hostname))
+        db.execute('UPDATE domains SET state=?,http_status=?,latency_ms=?,checked_at=?,status_changed_at=CASE WHEN ? THEN ? ELSE status_changed_at END,check_scope=?,access_state=? WHERE hostname=?',
+          (state,status,latency,now,previous!=state,now,scope,access,hostname))
         db.execute('INSERT INTO samples VALUES(?,?,?,?,?)',(hostname,now,state,status,latency))
     db.execute('DELETE FROM samples WHERE timestamp<?',(now-30*86400,))
     db.execute('DELETE FROM events WHERE timestamp<?',(now-90*86400,))

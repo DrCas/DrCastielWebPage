@@ -28,9 +28,9 @@ class DashboardTests(unittest.TestCase):
                 self.assertEqual(response.status_code,200,path)
     def test_monitor_records_transitions_and_removals(self):
         monitor.upsert_domains(self.db,{'example.com':{'source':'test','fingerprint':'one'}})
-        with patch.object(monitor,'probe',return_value=('example.com','down',404,12)):
+        with patch.object(monitor,'probe',return_value=('example.com','down',404,12,'Public HTTPS','public')):
             monitor.sample_domains(self.db)
-        with patch.object(monitor,'probe',return_value=('example.com','up',200,8)):
+        with patch.object(monitor,'probe',return_value=('example.com','up',200,8,'Public HTTPS','public')):
             monitor.sample_domains(self.db)
         result=self.client.get('/api/domains/example.com').get_json()
         self.assertEqual(result['state'],'up');self.assertEqual(result['uptime_pct'],50)
@@ -57,6 +57,22 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(self.client.get('/api/projects/demo/files?path=../secret').status_code,400)
         for url in ('http://example.com','https://127.0.0.1','https://100.117.231.66','https://example.com:8443'):
             self.assertFalse(monitor.public_url(url),url)
+
+    def test_access_login_page_is_not_assumed_to_be_site_health(self):
+        from unittest.mock import MagicMock
+        response=MagicMock()
+        response.status=200
+        response.geturl.return_value='https://example.cloudflareaccess.com/cdn-cgi/access/login/example.com'
+        opener=MagicMock()
+        opener.open.return_value.__enter__.return_value=response
+        with patch.object(monitor,'public_url',return_value=True),patch.object(monitor.urllib.request,'build_opener',return_value=opener),patch.object(monitor,'origin_probe',return_value=None):
+            result=monitor.probe(('example.com','https://example.com'))
+            self.assertEqual(result[1],'protected')
+        with patch.object(monitor,'public_url',return_value=True),patch.object(monitor.urllib.request,'build_opener',return_value=opener),patch.object(monitor,'origin_probe',return_value=('down',502,3)):
+            result=monitor.probe(('example.com','https://example.com'))
+            self.assertEqual(result[1],'down')
+            self.assertEqual(result[2],502)
+            self.assertEqual(result[5],'protected')
 
 
 if __name__=='__main__':unittest.main()

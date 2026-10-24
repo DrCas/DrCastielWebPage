@@ -35,3 +35,7 @@ Back up the deployed source, compose.yml, and previous image before changes. Bui
 The October 23, 2026 deployment backup is /mnt/ssd/docker/web-stack/backups/www-site-redesign-20261023-194442 and the prior image is tagged drcastiel-dashboard:before-redesign. Restore source from its source/ directory and compose.yml from that backup; retag the prior image as web-stack-www-site, then recreate only www-site with --no-build. Monitoring history and existing uptime_history.json stay on the host.
 
 GitHub is queried without credentials and only public repositories are published. Results are cached; GitHub outages can temporarily serve cached data. Private repositories require an authenticated private section before they can be included.
+
+## Protected endpoint checks
+
+Existing Cloudflare Access protection remains enabled. The monitor recognizes Access login redirects and does not treat their HTTP 200 as website health. For hostnames explicitly configured in local Nginx it separately checks the local origin using the original Host header, and labels the detail page "Local origin + protected edge". Protected services without a verified local origin remain "Protected" rather than being counted as operational. Public checks continue to validate HTTPS and reject private destinations and private redirects. Old edge-only samples from initial setup were excluded from availability after this validation correction.
