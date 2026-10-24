@@ -1,348 +1,94 @@
-/* =========================================================
-   DrCastiel Dashboard — client logic
-   - Pings /api/status (same origin)
-   - Optionally checks public URLs
-   ========================================================= */
-
-const CONFIG = {
-  refreshMs: 15000,
-  // "Services" are the cards you want to see uptime/latency for.
-  // If you keep the /api/status API running, you can also show local unit status.
-  services: [
-    { id: "dev",   name: "Crown Dev Site",   url: "https://dev.drcastiel.com" },
-    { id: "admin", name: "Admin Portal",     url: "https://admin.drcastiel.com" },
-    { id: "home",  name: "DrCastiel Home",   url: "https://drcastiel.com" }
-  ],
-  // "Projects" are pinned links (not necessarily uptime-checked).
-  projects: [
-    { name: "Crown Graphics", desc: "Static site + quick-order forms", url: "https://dev.drcastiel.com" },
-    { name: "Crown Admin Portal", desc: "Jobs + order intake + PDFs", url: "https://admin.drcastiel.com" },
-    { name: "Crown-Webpage Repo", desc: "GitHub repository", url: "https://github.com/DrCas/Crown-Webpage" },
-    { name: "MTGValueBot", desc: "Discord bot + pricing alerts", url: "#" },
-    { name: "HaulAds", desc: "Trailer wrap advertising startup", url: "#" },
-    { name: "Adventure Map Game", desc: "Unity GPS exploration concept", url: "#" }
-  ]
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const paths = {
+ chip:'<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4M19 9h4m-4 6h4"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+ server:'<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6m-6 11h6"/>',
+ globe:'<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
+ repo:'<path d="M4 4a2 2 0 0 1 2-2h13v20H6a2 2 0 0 1-2-2V4zm0 13h15M8 6h7M8 9h5"/>',
+ arrow:'<path d="M7 17 17 7M7 7h10v10"/>',
+ pulse:'<path d="M2 12h5l3-8 4 16 3-8h5"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ folder:'<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
+ file:'<path d="M14 2H5v20h14V7l-5-5zM14 2v6h5M8 12h8m-8 4h6"/>',
+ star:'<path d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>',
+ branch:'<circle cx="6" cy="4" r="2"/><circle cx="18" cy="4" r="2"/><circle cx="6" cy="20" r="2"/><path d="M6 6v12m12-12v3a4 4 0 0 1-4 4H6"/>',
+ info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',
+ back:'<path d="m10 5-7 7 7 7M3 12h18"/>'
 };
-
-// Health thresholds for progress bars and metrics
-const THRESHOLDS = {
-  uptime: { good: 95, warn: 90 },      // % uptime (higher is better)
-  temp: { warn: 70, bad: 80 },         // °C (lower is better)
-  load: { warn: 0.8, bad: 1.2 },       // factor of cpu_count (lower is better)
-  memory: { warn: 80, bad: 90 },       // % used (lower is better)
-  disk: { warn: 80, bad: 90 },         // % used (lower is better)
-};
-
-function el(id){ return document.getElementById(id); }
-function clamp(n, min, max){ return Math.min(max, Math.max(min, n)); }
-
-function fmtBytes(n){
-  if (n == null) return "—";
-  const units = ["B","KB","MB","GB","TB"];
-  let i = 0, v = Number(n);
-  while (v >= 1024 && i < units.length-1){ v/=1024; i++; }
-  return `${v.toFixed(i===0?0:1)} ${units[i]}`;
+const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.repo}</svg>`;
+const badge = (state,label) => `<span class="badge ${esc(state || 'unknown')}">${esc(label || ({good:'Healthy',up:'Operational',bad:'Needs attention',down:'Unavailable',warn:'Check system',unknown:'Unknown',stale:'Data stale',protected:'Protected',private:'Private'}[state] || state))}</span>`;
+const bytes = n => {if(n == null)return '—';let i=0;const units=['B','KB','MB','GB','TB'];while(n>=1024&&i<4){n/=1024;i++;}return `${n.toFixed(i?1:0)} ${units[i]}`;};
+const date = value => {if(!value)return 'Not recorded';let d=new Date(typeof value==='number'?value*1000:value);return Number.isNaN(d.getTime())?'Not recorded':d.toLocaleString([], {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});};
+const ago = value => {if(!value)return '—';const s=Math.max(0,(Date.now()-new Date(typeof value==='number'?value*1000:value))/1000);return s<60?'just now':s<3600?`${Math.floor(s/60)}m ago`:s<86400?`${Math.floor(s/3600)}h ago`:`${Math.floor(s/86400)}d ago`;};
+const uptime = value => {if(value==null)return '—';const days=Math.floor(value/86400),hours=Math.floor(value%86400/3600),mins=Math.floor(value%3600/60);return days?`${days}<small>d</small> ${hours}<small>h</small> ${mins}<small>m</small>`:`${hours}<small>h</small> ${mins}<small>m</small>`;};
+const external = (url,label,primary=false) => /^https?:\/\//.test(url||'')?`<a class="btn ${primary?'primary':''}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ${icon('arrow')}</a>`:'';
+let statusData=null, projectData=null, projectFetched=0, activeRepo=null, routeId=0, busy=false;
+async function api(path){const response=await fetch(path,{signal:AbortSignal.timeout(25000),cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||'Could not load data');return data;}
+function pageHead(title,eyebrow,right=''){return `<div class="page-head"><div><div class="eyebrow">${eyebrow}</div><h1>${esc(title)}</h1></div>${right}</div>`;}
+function note(text){return `<div class="notice">${icon('info')}${esc(text)}</div>`;}
+function systemCard(key,title,subtitle){const d=statusData?.[key]||{},state=d.stale?'stale':d.health||'unknown';
+ const resource=(label,data)=>{let pct=data?.used_pct;return `<div class="resource"><div class="resource-head"><span>${label}</span><span><b>${pct==null?'—':pct.toFixed(1)+'%'}</b>${data?.total_bytes?' / '+bytes(data.used_bytes)+' of '+bytes(data.total_bytes):''}</span></div><div class="meter"><span style="width:${pct==null?0:Math.min(100,Math.max(0,pct))}%"></span></div></div>`;};
+ const net=d.net||{};const rate=net.rx_rate!=null;const network=`<span>↓ <b>${bytes(rate?net.rx_rate:net.rx_bytes)}${rate?'/s':''}</b></span><span>↑ <b>${bytes(rate?net.tx_rate:net.tx_bytes)}${rate?'/s':''}</b></span>`;
+ return `<article class="system-card ${key}"><div class="system-top"><div class="system-identity"><span class="icon-box">${icon(key==='pi'?'chip':'server')}</span><div><h2>${title}</h2><p>${subtitle}</p></div></div>${badge(state)}</div><div class="system-highlights"><div><div class="metric-label">Uptime</div><div class="metric-value">${uptime(d.uptime_seconds)}</div></div><div><div class="metric-label">CPU temperature</div><div class="metric-value">${d.cpu_temp_c==null?'—':d.cpu_temp_c.toFixed(1)}<small> °C</small></div></div></div><div class="resource-list">${resource('CPU', {used_pct:d.cpu_pct})}${resource('Memory',d.mem)}${resource('Storage',d.disk)}</div><div class="system-bottom"><span>${d.error?esc(d.error):rate?'Network traffic':'Network since boot'}</span><div class="network">${network}</div></div><div class="system-bottom"><span>${d.timestamp?'Updated '+ago(d.timestamp):'Awaiting connection'}</span>${key==='server'?'<a class="text-link" href="https://casa.drcastiel.com" target="_blank" rel="noopener noreferrer">Open CasaOS ↗</a>':'<span>Raspberry Pi · host metrics</span>'}</div></article>`;
 }
-
-function fmtPct(n){ return (n == null) ? "—" : `${Math.round(n)}%`; }
-
-// Determine color class based on value and thresholds
-// higherIsBetter: true for uptime (higher%), false for temp/load/memory/disk
-function colorForMetric(value, threshold, higherIsBetter = false){
-  if (value == null) return "";
-  
-  if (higherIsBetter) {
-    // Uptime: higher is better. Bad if < warn, warn if < good, good if >= good
-    if (value < threshold.warn) return "bad";
-    if (value < threshold.good) return "warn";
-    return "good";
-  } else {
-    // Temp/Load/Memory/Disk: lower is better. Good if < warn, warn if < bad, bad if >= bad
-    if (value >= threshold.bad) return "bad";
-    if (value >= threshold.warn) return "warn";
-    return "good";
-  }
+function domainRows(items,compact=false){if(!items.length)return '<div class="empty">Your domains will appear after the first background scan.</div>';return `<div class="table-wrap"><table><thead><tr><th>WEBSITE</th><th>STATUS</th><th>RESPONSE</th><th class="hide-small">${compact?'LAST CHECKED':'STATUS CHANGED'}</th><th></th></tr></thead><tbody>${items.map(d=>`<tr><td><a class="row-link" href="/domains/${encodeURIComponent(d.hostname)}"><span class="domain-name"><span class="domain-icon">${icon('globe')}</span><span><strong>${esc(d.name)}</strong><small>${esc(d.hostname)}</small></span></span></a></td><td>${badge(Date.now()/1000-(d.checked_at||0)>180?'stale':d.state)}</td><td class="mono">${d.latency_ms==null?'—':Math.round(d.latency_ms)+' ms'}</td><td class="mono hide-small">${ago(compact?d.checked_at:d.status_changed_at)}</td><td><a class="row-link chevron" aria-label="Details for ${esc(d.hostname)}" href="/domains/${encodeURIComponent(d.hostname)}">›</a></td></tr>`).join('')}</tbody></table></div>`;}
+function overview(){const items=statusData?.domains||[],up=items.filter(x=>x.state==='up').length,issues=items.filter(x=>x.state==='down').length;
+ $('#main').innerHTML=pageHead('Overview','YOUR INFRASTRUCTURE','<div class="head-note"><span class="live-dot"></span>Health refreshes every 15s</div>')+`<section class="systems" aria-label="System health">${systemCard('pi','Pi Health','Castiel Pi')}${systemCard('server','Server Health','CasServer · CasaOS')}</section><section class="stats-strip" aria-label="At a glance"><a class="stat" href="/domains">${icon('globe')}<div><strong>${items.length}</strong><small>Domains tracked</small></div><span>View domains ↗</span></a><a class="stat" href="/domains">${icon('pulse')}<div><strong>${up}<span class="subtle"> / ${items.length}</span></strong><small>Sites operational</small></div><span>${issues?issues+' need attention':'Public endpoint checks'}</span></a><a class="stat" href="/projects">${icon('repo')}<div><strong>${projectData?.projects?.length??'↗'}</strong><small>GitHub projects</small></div><span>Explore projects ↗</span></a></section><section><div class="section-head"><h2>Domain activity</h2><a class="text-link" href="/domains">All domains →</a></div>${domainRows(items.slice(0,4),true)}</section>`;
 }
-
-function badgeFromHealth(h){
-  const t = (h || "unknown").toLowerCase();
-  if (t === "good") return { text:"GOOD", cls:"good" };
-  if (t === "warn") return { text:"WARN", cls:"warn" };
-  if (t === "bad")  return { text:"BAD",  cls:"bad" };
-  return { text:"—", cls:"" };
+function domainsPage(){const items=statusData?.domains||[];$('#main').innerHTML=pageHead('Domains','CONNECTED WEBSITES',`<div class="head-note">${items.length} domains · checked every minute</div>`)+note(statusData?.discovery?.note||'Scanning your connected websites…')+`<div class="toolbar"><input class="search" id="domainSearch" type="search" placeholder="Search domains…" aria-label="Search domains"><select id="domainFilter" aria-label="Filter domain status"><option value="all">All statuses</option><option value="up">Operational</option><option value="down">Unavailable</option><option value="protected">Protected</option><option value="private">Private</option></select></div><div id="domainsTable">${domainRows(items)}</div>`;
+ const filter=()=>{const q=$('#domainSearch').value.toLowerCase(),f=$('#domainFilter').value;$('#domainsTable').innerHTML=domainRows(items.filter(d=>(d.name+' '+d.hostname).toLowerCase().includes(q)&&(f==='all'||d.state===f)));};$('#domainSearch').addEventListener('input',filter);$('#domainFilter').addEventListener('change',filter);
 }
-
-function badgeForEndpoint(endpoint){
-  if (!endpoint) return { text: "—", cls: "" };
-  if (endpoint.ok) return { text: "UP", cls: "good" };
-  return { text: "DOWN", cls: "bad" };
+function renderDomain(d){const hist=d.history||[],maxBars=90;let buckets=[];
+ if(hist.length){const first=hist[0].timestamp,last=hist.at(-1).timestamp,width=Math.max(60,(last-first)/maxBars);for(let t=first;t<=last;t+=width){const samples=hist.filter(s=>s.timestamp>=t&&s.timestamp<t+width);const worst=samples.find(s=>s.state==='down')||samples.find(s=>s.state==='protected')||samples[0];buckets.push(worst||{state:'unknown',timestamp:t});}}
+ const chart=buckets.length?`<div class="chart" aria-label="Recorded status history">${buckets.map(s=>`<span class="${esc(s.state)}" title="${esc(date(s.timestamp)+' · '+s.state)}"></span>`).join('')}</div><div class="chart-axis"><span>${date(hist[0].timestamp)}</span><span>${date(hist.at(-1).timestamp)}</span></div>`:'<div class="empty">History begins with the first background check.</div>';
+ $('#main').innerHTML=`<a class="back" href="/domains">← All domains</a>`+pageHead(d.name,esc(d.hostname),external(d.url,'Open Site',true))+`<div class="detail-grid"><div><div class="panel"><div class="section-head" style="margin-top:0"><h2>Service health</h2>${badge(d.state)}</div><div class="detail-stats"><div><div class="metric-label">Response time</div><div class="metric-value">${d.latency_ms==null?'—':Math.round(d.latency_ms)}<small> ms</small></div></div><div><div class="metric-label">Recorded availability</div><div class="metric-value">${d.uptime_pct==null?'—':d.uptime_pct+'<small>%</small>'}</div></div><div><div class="metric-label">HTTP response</div><div class="metric-value">${d.http_status??'—'}</div></div></div><h2>Recorded history · last 30 days</h2>${chart}<div class="legend"><span><i></i>Operational</span><span><i class="down"></i>Unavailable</span><span><i class="warn"></i>Protected</span></div><p class="subtle">One check per minute. Availability uses recorded operational and unavailable checks; protected and missing samples are excluded.</p></div><div class="panel"><h2>Recent activity</h2>${d.events.map(e=>`<div class="event"><span class="event-dot"></span><div><p>${esc(e.message)}</p><small>${date(e.timestamp)}</small></div></div>`).join('')||'<p class="subtle">No activity recorded yet.</p>'}</div></div><aside><div class="panel"><h2>Domain details</h2><dl class="detail-list"><dt>Address</dt><dd>${esc(d.hostname)}</dd><dt>Health check</dt><dd>${esc(d.check_scope||'Public HTTPS')}</dd><dt>Access</dt><dd>${d.access_state==='protected'?'Cloudflare / login protected':esc(d.access_state||'Public')}</dd><dt>Discovery source</dt><dd>${esc(d.source)}</dd><dt>Last checked</dt><dd>${date(d.checked_at)}</dd><dt>Status last changed</dt><dd>${date(d.status_changed_at)}</dd><dt>DNS last changed</dt><dd>${d.dns_changed_at?date(d.dns_changed_at):'Requires Cloudflare DNS connection'}</dd><dt>Configuration observed changed</dt><dd>${date(d.config_changed_at)}</dd><dt>First discovered</dt><dd>${date(d.first_seen)}</dd></dl></div></aside></div>`;
 }
-
-function statusApiCandidates(){
-  return [
-    "/api/status",
-    new URL("api/status", window.location.href).href,
-  ];
+function projectCards(items){return items.length?`<div class="project-grid">${items.map(p=>`<a class="project-card" href="/projects/${encodeURIComponent(p.name)}"><div class="project-top">${icon('repo')}<span class="tag">${p.archived?'Archived':p.fork?'Fork':'Public'}</span></div><h2>${esc(p.name)}</h2><p>${esc(p.description||'Explore the files, README, and recent updates.')}</p><div class="project-meta"><span><i class="lang-dot"></i>${esc(p.language||'Repository')}</span><span>☆ ${p.stargazers_count}</span><span>${ago(p.pushed_at)}</span></div></a>`).join('')}</div>`:'<div class="empty">No projects match your search.</div>';}
+function projectsPage(){const items=projectData.projects;$('#main').innerHTML=pageHead('Projects','BUILT BY DRCAS',`<div class="head-note">${items.length} public repositories · synced from GitHub</div>`)+`<div class="toolbar"><input id="projectSearch" class="search" type="search" placeholder="Search projects…" aria-label="Search projects"><select id="languageFilter" aria-label="Filter project language"><option value="all">All languages</option>${[...new Set(items.map(p=>p.language).filter(Boolean))].sort().map(l=>`<option>${esc(l)}</option>`).join('')}</select><select id="projectSort" aria-label="Sort projects"><option value="updated">Recently updated</option><option value="name">Name A–Z</option><option value="stars">Most starred</option></select></div><div id="projectCards">${projectCards(items)}</div>`;
+ const filter=()=>{let list=items.filter(p=>(p.name+' '+(p.description||'')).toLowerCase().includes($('#projectSearch').value.toLowerCase())&&($('#languageFilter').value==='all'||p.language===$('#languageFilter').value));const sort=$('#projectSort').value;list.sort(sort==='name'?(a,b)=>a.name.localeCompare(b.name):sort==='stars'?(a,b)=>b.stargazers_count-a.stargazers_count:(a,b)=>new Date(b.pushed_at)-new Date(a.pushed_at));$('#projectCards').innerHTML=projectCards(list);};['projectSearch','languageFilter','projectSort'].forEach(id=>$('#'+id).addEventListener(id==='projectSearch'?'input':'change',filter));
 }
-
-async function fetchStatusApi(){
-  let lastError = null;
-  for (const url of statusApiCandidates()){
-    try{
-      const res = await fetch(url, { cache: "no-store" });
-      if (res.ok) return res;
-      lastError = new Error(`Status API ${url} returned ${res.status}`);
-    }catch(e){
-      lastError = e;
-    }
-  }
-  throw lastError;
+function filesView(files,path=''){if(!Array.isArray(files))return `<div class="pathbar">${esc(path)}</div><button class="btn" data-folder="${esc(path.split('/').slice(0,-1).join('/'))}">← Parent folder</button><pre class="code-preview">${esc(files.content)}</pre>${external(files.html_url,'Open file on GitHub')}`;
+ return `<div class="pathbar">${esc(activeRepo.repo.name)} / ${esc(path||'root')}</div>${path?`<button class="file-row" data-folder="${esc(path.split('/').slice(0,-1).join('/'))}">${icon('folder')} ..</button>`:''}${[...files].sort((a,b)=>(a.type==='dir'?0:1)-(b.type==='dir'?0:1)||a.name.localeCompare(b.name)).map(f=>`<button class="file-row" data-folder="${esc(f.path)}">${icon(f.type==='dir'?'folder':'file')}${esc(f.name)}<span>${f.type==='dir'?'folder':bytes(f.size)}</span></button>`).join('')}`;
 }
-
-async function pingUrl(url){
-  const t0 = performance.now();
-  try{
-    // no-cors means we can't read status, but timing still tells us "reachable-ish".
-    // If you want strict HTTP status, set up a server-side probe in /api/status.
-    await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
-    const ms = Math.round(performance.now() - t0);
-    return { ok: true, ms };
-  }catch(e){
-    return { ok: false, ms: null };
-  }
+function repoTab(tab){const d=activeRepo;document.querySelectorAll('[data-repotab]').forEach(b=>{b.classList.toggle('active',b.dataset.repotab===tab);b.setAttribute('aria-selected',String(b.dataset.repotab===tab));});const panel=$('#repoContent');
+ if(tab==='readme'){panel.innerHTML=`<article class="readme">${d.readme_html}</article>`;panel.querySelectorAll('a').forEach(a=>{const href=a.getAttribute('href');try{const url=new URL(href,`${d.repo.html_url}/blob/${d.repo.default_branch}/`);if(!['http:','https:'].includes(url.protocol)){a.removeAttribute('href');return;}a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';}catch{a.removeAttribute('href');}});}
+ else if(tab==='files')panel.innerHTML=filesView(d.files);
+ else if(tab==='commits')panel.innerHTML=d.commits.length?d.commits.map(c=>`<div class="event"><span class="event-dot"></span><div><p>${esc(c.commit.message.split('\n')[0])}</p><small>${esc(c.commit.author.name)} · ${date(c.commit.author.date)} · <a class="text-link" href="${esc(c.html_url)}" target="_blank" rel="noopener noreferrer">${esc(c.sha.slice(0,7))} ↗</a></small></div></div>`).join(''):'<p class="subtle">No commits yet.</p>';
+ else panel.innerHTML=d.releases.length?d.releases.map(r=>`<div class="event"><span class="event-dot"></span><div><p>${esc(r.name||r.tag_name)}</p><small>${date(r.published_at)} · <a class="text-link" href="${esc(r.html_url)}" target="_blank" rel="noopener noreferrer">Open release ↗</a></small></div></div>`).join(''):'<div class="empty">No published releases yet.</div>';
 }
-
-function renderServices(){
-  const host = el("serviceCards");
-  host.innerHTML = "";
-  for (const s of CONFIG.services){
-    const card = document.createElement("div");
-    card.className = "card span-4";
-    card.innerHTML = `
-      <div class="card-head">
-        <div>
-          <div class="card-title">${s.name}</div>
-          <div class="card-subtitle">${s.url}</div>
-        </div>
-        <span id="badge-${s.id}" class="badge">—</span>
-      </div>
-      <div class="grid" style="grid-template-columns:repeat(2,1fr); gap:12px;">
-        <div class="metric">
-          <div class="label">Reachable</div>
-          <div id="reach-${s.id}" class="value mono">—</div>
-        </div>
-        <div class="metric">
-          <div class="label">Latency</div>
-          <div id="lat-${s.id}" class="value mono">—</div>
-        </div>
-        <div class="metric" style="grid-column:1 / -1;">
-          <div class="label">30d Uptime (15m samples)</div>
-          <div class="progress"><span id="uptimebar-${s.id}" class="progress-fill"></span></div>
-        </div>
-      </div>
-      <div class="service-footer">
-        <a class="pill" href="${s.url}" target="_blank" rel="noreferrer">Open</a>
-        <span id="uptime-inline-${s.id}" class="uptime-inline mono">—</span>
-      </div>
-    `;
-    host.appendChild(card);
-  }
+function renderRepo(d){activeRepo=d;const p=d.repo;$('#main').innerHTML=`<a class="back" href="/projects">← All projects</a>`+pageHead(p.name,'DRCAS / PROJECT',external(p.html_url,'Open on GitHub',true))+`<p class="repo-description">${esc(p.description||'')}</p><div class="repo-facts"><span><i class="lang-dot"></i>${esc(p.language||'Repository')}</span><span>${icon('star')}${p.stargazers_count} stars</span><span>${icon('branch')}${p.forks_count} forks</span><span>${icon('clock')}Updated ${ago(p.pushed_at)}</span>${p.archived?'<span class="tag">Archived</span>':''}</div><div class="detail-grid" style="margin-top:28px"><section class="panel"><div class="repo-tabs" role="tablist" aria-label="Repository sections"><button role="tab" data-repotab="readme">README</button><button role="tab" data-repotab="files">Files</button><button role="tab" data-repotab="commits">Commits</button><button role="tab" data-repotab="releases">Releases</button></div><div id="repoContent"></div></section><aside><div class="panel"><h2>About this project</h2><dl class="detail-list"><dt>Owner</dt><dd>DrCas</dd><dt>Default branch</dt><dd class="mono">${esc(p.default_branch)}</dd><dt>Created</dt><dd>${date(p.created_at)}</dd><dt>Last push</dt><dd>${date(p.pushed_at)}</dd><dt>License</dt><dd>${esc(p.license?.name||'Not specified')}</dd></dl>${p.homepage?'<div style="margin-top:20px">'+external(p.homepage,'Project website')+'</div>':''}</div>${p.topics?.length?'<div class="panel"><h2>Topics</h2><div style="display:flex;gap:6px;flex-wrap:wrap">'+p.topics.map(t=>'<span class="tag">'+esc(t)+'</span>').join('')+'</div></div>':''}</aside></div>`;repoTab('readme');
 }
-
-function renderProjects(){
-  const host = el("projectCards");
-  host.innerHTML = "";
-  for (const p of CONFIG.projects){
-    const card = document.createElement("a");
-    card.className = "card link span-4";
-    card.href = p.url;
-    if (p.url && p.url !== "#"){
-      card.target = "_blank";
-      card.rel = "noreferrer";
-    }
-    card.innerHTML = `
-      <div class="card-title">${p.name}</div>
-      <div class="card-subtitle">${p.desc || ""}</div>
-    `;
-    host.appendChild(card);
-  }
+async function route(){const id=++routeId;const parts=location.pathname.split('/').filter(Boolean),section=parts[0]||'overview';document.querySelectorAll('[data-nav]').forEach(a=>{const selected=a.dataset.nav===section;a.classList.toggle('active',selected);selected?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current');});document.title=`DrCastiel · ${section==='overview'?'Overview':section==='domains'?'Domains':section==='servers'?'Servers':'Projects'}`;
+ try{if(!statusData)statusData=await api('/api/status');if(id!==routeId)return;$('#domainCount').textContent=statusData.domains.length;
+ if(section==='servers')await serversPage(parts,id);else if(section==='overview')overview();else if(section==='domains'&&!parts[1])domainsPage();else if(section==='domains'){ $('#main').innerHTML='<div class="empty loading">Loading domain history…</div>';const d=await api('/api/domains/'+encodeURIComponent(decodeURIComponent(parts[1])));if(id===routeId)renderDomain(d);}
+ else if(section==='projects'&&!parts[1]){$('#main').innerHTML=pageHead('Projects','BUILT BY DRCAS')+'<div class="empty loading">Syncing your GitHub projects…</div>';if(!projectData||Date.now()-projectFetched>600000){projectData=await api('/api/projects');projectFetched=Date.now();}if(id===routeId)projectsPage();}
+ else if(section==='projects'){$('#main').innerHTML='<div class="empty loading">Loading project…</div>';const d=await api('/api/projects/'+encodeURIComponent(decodeURIComponent(parts[1])));if(id===routeId)renderRepo(d);}
+ else $('#main').innerHTML=pageHead('Page not found','404')+'<a class="btn" href="/">Back to overview</a>';
+ }catch(e){if(id===routeId)$('#main').innerHTML=note(e.message)+'<button class="btn" id="retryBtn">Try again</button>';}
 }
-
-function setText(id, txt){ const node = el(id); if (node) node.textContent = txt; }
-
-function setProgress(id, pct, colorClass){
-  const node = el(id);
-  if (!node) return;
-  const width = Number.isFinite(pct) ? clamp(pct, 0, 100) : 0;
-  node.style.width = `${width.toFixed(0)}%`;
-  // Remove existing color classes and apply new one
-  node.classList.remove("good", "warn", "bad");
-  if (colorClass) node.classList.add(colorClass);
+function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,4500);}
+async function refresh(manual=false){
+ if(busy)return;busy=true;$('#refreshBtn').disabled=true;
+ try{
+  statusData=await api('/api/status');$('#domainCount').textContent=statusData.domains.length;
+  $('#updatedAt').textContent='Updated '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'});
+  if(location.pathname==='/')overview();
+  if(location.pathname==='/domains'){
+   const q=$('#domainSearch')?.value||'',f=$('#domainFilter')?.value||'all';
+   domainsPage();$('#domainSearch').value=q;$('#domainFilter').value=f;$('#domainSearch').dispatchEvent(new Event('input'));
+  }
+  if(location.pathname==='/projects'&&Date.now()-projectFetched>600000){
+   projectData=await api('/api/projects');projectFetched=Date.now();projectsPage();
+  }
+  if(manual){projectData=null;await route();toast('Dashboard refreshed');}
+ }catch{toast('Connection interrupted. Showing the last available data.');}
+ finally{busy=false;$('#refreshBtn').disabled=false;}
 }
+document.addEventListener('click',async event=>{const tab=event.target.closest('[data-repotab]');if(tab){repoTab(tab.dataset.repotab);return;}const file=event.target.closest('[data-folder]');if(file){file.disabled=true;try{const name=activeRepo.repo.name,path=file.dataset.folder;const d=await api('/api/projects/'+encodeURIComponent(name)+'/files?path='+encodeURIComponent(path));if(activeRepo.repo.name===name&&location.pathname==='/projects/'+encodeURIComponent(name))$('#repoContent').innerHTML=filesView(d,path);}catch(e){toast(e.message);file.disabled=false;}return;}
+ if(event.target.closest('#retryBtn')){route();return;}
+ const a=event.target.closest('a');if(a&&a.origin===location.origin&&!a.target&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey&&event.button===0){event.preventDefault();history.pushState({},'',a.href);window.scrollTo(0,0);route();}});
+window.addEventListener('popstate',route);$('#refreshBtn').addEventListener('click',()=>refresh(true));route().then(async()=>{try{if(!projectData){projectData=await api('/api/projects');projectFetched=Date.now();if(location.pathname==='/')overview();}}catch{} $('#updatedAt').textContent='Updated '+new Date().toLocaleTimeString();});setInterval(()=>{if(!document.hidden)refresh();},15000);
 
-function setBadge(node, txt, cls){
-  if (!node) return;
-  node.textContent = txt;
-  node.classList.remove("good","warn","bad");
-  if (cls) node.classList.add(cls);
-}
 
-function renderServiceStatusFromApi(data){
-  const endpointList = data?.public_endpoints;
-  if (!Array.isArray(endpointList)) return false;
 
-  const endpointById = Object.fromEntries(endpointList.map((item) => [item.id, item]));
-  for (const service of CONFIG.services){
-    const endpoint = endpointById[service.id];
-    if (!endpoint) continue;
-
-    setText(`reach-${service.id}`, endpoint.ok ? "yes" : "no");
-    setText(`lat-${service.id}`, endpoint.latency_ms != null ? `${endpoint.latency_ms} ms` : "—");
-    
-    // 30d Uptime with color-coded progress bar (higher is better)
-    const uptime = endpoint.uptime_30d_pct;
-    setText(`uptime-inline-${service.id}`, typeof uptime === "number" ? `${uptime.toFixed(1)}%` : "—");
-    if (typeof uptime === "number") {
-      const color = colorForMetric(uptime, THRESHOLDS.uptime, true); // higherIsBetter=true
-      setProgress(`uptimebar-${service.id}`, uptime, color);
-    } else {
-      setProgress(`uptimebar-${service.id}`, null);
-    }
-
-    const badge = badgeForEndpoint(endpoint);
-    setBadge(el(`badge-${service.id}`), badge.text, badge.cls);
-  }
-
-  return true;
-}
-
-function renderPi(data){
-  // Basic fields (API may return nulls)
-  setText("piUptime", data?.pi?.uptime_human ?? "—");
-  const uptimeSeconds = data?.pi?.uptime_seconds;
-  const piUptimePct = Number.isFinite(uptimeSeconds)
-    ? Math.min((Number(uptimeSeconds) / (30 * 24 * 60 * 60)) * 100, 100)
-    : null;
-  setProgress("meterPiUptime", piUptimePct);
-  setText("piUptimePct", Number.isFinite(piUptimePct) ? `${piUptimePct.toFixed(2)}% / 30d` : "—");
-
-  // CPU Temperature with color-coded bar (lower is better)
-  const tempC = data?.pi?.cpu_temp_c;
-  setText("cpuTemp", tempC != null ? `${tempC.toFixed(1)}°C` : "—");
-  if (tempC != null) {
-    const tempPct = (tempC / 85) * 100;
-    const tempColor = colorForMetric(tempC, THRESHOLDS.temp, false); // higherIsBetter=false
-    setProgress("meterCpuTemp", tempPct, tempColor);
-  } else {
-    setProgress("meterCpuTemp", null);
-  }
-
-  // CPU Load with color-coded bar (lower is better)
-  const load = data?.pi?.load_1m;
-  const cpuCount = data?.pi?.cpu_count ?? null;
-  setText("cpuLoad", load != null ? `${load.toFixed(2)} (1m)` : "—");
-  if (load != null && cpuCount) {
-    const loadPct = (load / cpuCount) * 100;
-    const loadColor = colorForMetric(load, THRESHOLDS.load, false); // higherIsBetter=false
-    setProgress("meterCpuLoad", loadPct, loadColor);
-  } else {
-    setProgress("meterCpuLoad", null);
-  }
-
-  // Memory with color-coded bar (lower is better)
-  if (data?.pi?.mem) {
-    const memPct = data.pi.mem.used_pct;
-    setText("mem", `${fmtPct(memPct)} • ${fmtBytes(data.pi.mem.used_bytes)} / ${fmtBytes(data.pi.mem.total_bytes)}`);
-    const memColor = colorForMetric(memPct, THRESHOLDS.memory, false); // higherIsBetter=false
-    setProgress("meterMem", memPct, memColor);
-  } else {
-    setText("mem", "—");
-    setProgress("meterMem", null);
-  }
-
-  // Disk with color-coded bar (lower is better)
-  if (data?.pi?.disk) {
-    const diskPct = data.pi.disk.used_pct;
-    setText("disk", `${fmtPct(diskPct)} • ${fmtBytes(data.pi.disk.used_bytes)} / ${fmtBytes(data.pi.disk.total_bytes)}`);
-    const diskColor = colorForMetric(diskPct, THRESHOLDS.disk, false); // higherIsBetter=false
-    setProgress("meterDisk", diskPct, diskColor);
-  } else {
-    setText("disk", "—");
-    setProgress("meterDisk", null);
-  }
-
-  if (data?.pi?.net){
-    setText("net", `↑ ${fmtBytes(data.pi.net.tx_bytes)} • ↓ ${fmtBytes(data.pi.net.rx_bytes)}`);
-  }else setText("net", "—");
-
-  // Service units (optional)
-  setText("svcCloudflared", data?.services?.cloudflared?.active_state ?? "—");
-  setText("svcGunicorn",    data?.services?.gunicorn?.active_state ?? "—");
-  setText("svcNginx",       data?.services?.nginx?.active_state ?? "—");
-
-  // Health badge
-  const b = badgeFromHealth(data?.pi?.health);
-  setBadge(el("piBadge"), b.text, b.cls);
-
-  // Updated time
-  const ts = data?.ts ? new Date(data.ts) : new Date();
-  setText("lastUpdated", `Updated ${ts.toLocaleTimeString()}`);
-}
-
-async function refresh(){
-  const refreshBtn = el("refreshBtn");
-  if (refreshBtn) {
-    refreshBtn.disabled = true;
-    refreshBtn.textContent = "Refreshing…";
-  }
-
-  // Pull server-side status first (preferred)
-  let renderedFromApi = false;
-  try{
-    const res = await fetchStatusApi();
-    const data = await res.json();
-    renderPi(data);
-    renderedFromApi = renderServiceStatusFromApi(data);
-  }catch(e){
-    console.warn("Status API fetch failed:", e);
-    setText("lastUpdated", "API unavailable");
-    renderPi(null);
-  }
-
-  // Fallback to browser pings if API endpoint probes are unavailable.
-  if (!renderedFromApi){
-    await Promise.all(CONFIG.services.map(async (service) => {
-      const result = await pingUrl(service.url);
-      setText(`reach-${service.id}`, result.ok ? "yes" : "no");
-      setText(`lat-${service.id}`, result.ms != null ? `${result.ms} ms` : "—");
-      setText(`uptime-inline-${service.id}`, "—");
-      setProgress(`uptimebar-${service.id}`, null);
-      const badge = el(`badge-${service.id}`);
-      if (result.ok) setBadge(badge, "UP", "good");
-      else setBadge(badge, "DOWN", "bad");
-    }));
-  }
-
-  if (refreshBtn) {
-    refreshBtn.disabled = false;
-    refreshBtn.textContent = "Refresh";
-  }
-}
-
-function boot(){
-  renderServices();
-  renderProjects();
-  
-  // Refresh button
-  const refreshBtn = el("refreshBtn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", refresh);
-    refreshBtn.title = "Click to manually refresh data";
-  }
-  
-  // Initial load and auto-refresh
-  refresh();
-  setInterval(refresh, CONFIG.refreshMs);
-}
-
-boot();

@@ -1,0 +1,21 @@
+[Unit]
+Description=DrCastiel host health and website monitor
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/drcastiel/monitor.py
+Restart=always
+RestartSec=10
+Environment=DASHBOARD_STATE=/var/lib/web-stack-status
+UMask=0022
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/web-stack-status
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
