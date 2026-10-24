@@ -6,7 +6,7 @@ A Flask dashboard with Overview, Domains, and Projects pages.
 - Domains sync from Cloudflare DNS every 5 minutes and are checked independently every minute.
 - Domain detail pages show response codes, latency, recorded availability, observed status/configuration changes, and Cloudflare DNS modification dates.
 - Projects read public DrCas repositories from GitHub. README, files, source previews, commits, and releases stay within this website; GitHub links are available separately.
-- The server administration link is http://casa.drcastiel.com and resolves to its private Tailscale address. Tailscale is required. HTTP is carried inside the encrypted tailnet; a browser-trusted HTTPS endpoint is not configured.
+- The server administration link is https://casa.drcastiel.com. It resolves to the Pi's private Tailscale address, where a dedicated HTTPS gateway forwards traffic over Tailscale to CasaOS. Tailscale is required. A publicly trusted Let's Encrypt certificate is installed and renews automatically.
 
 ## Production
 
@@ -38,4 +38,15 @@ GitHub is queried without credentials and only public repositories are published
 
 ## Protected endpoint checks
 
-Existing Cloudflare Access protection remains enabled. The monitor recognizes Access login redirects and does not treat their HTTP 200 as website health. For hostnames explicitly configured in local Nginx it separately checks the local origin using the original Host header, and labels the detail page "Local origin + protected edge". Protected services without a verified local origin remain "Protected" rather than being counted as operational. Public checks continue to validate HTTPS and reject private destinations and private redirects. Old edge-only samples from initial setup were excluded from availability after this validation correction.
+Existing Cloudflare Access protection remains enabled. The monitor recognizes Access login redirects and does not treat their HTTP 200 as website health. For hostnames explicitly configured in local Nginx or the local tunnel it separately checks the local origin using the original Host header, and labels the detail page "Local origin + protected edge". Protected services without a verified local origin remain "Protected" rather than being counted as operational. Public checks continue to validate HTTPS and reject private destinations and private redirects. Old edge-only samples from initial setup were excluded from availability after this validation correction.
+
+
+## CasaOS HTTPS
+
+`casa.drcastiel.com` has a DNS-only A record pointing to the Pi's Tailscale address (100.71.117.23). The dedicated `drcastiel-casa.service` runs a separate Nginx master listening only on that address, port 443. It also permits only source addresses in the tailnet IPv4 range; other requests are denied. It forwards HTTP and WebSocket traffic over Tailscale to CasServer (100.117.231.66:80). The public website's Nginx master is independent, so CasaOS gateway startup/retry does not block the public websites if Tailscale starts later.
+
+Configuration templates are in deploy/casa-nginx.conf and deploy/drcastiel-casa.service. Installed paths are /etc/drcastiel/casa-nginx.conf and /etc/systemd/system/drcastiel-casa.service. A separate vhost in /etc/nginx/sites-available/casa.drcastiel.com redirects HTTP to HTTPS only for Tailscale clients; it rejects other client addresses. It does not create a public Cloudflare Tunnel route for CasaOS.
+
+The certificate is at /etc/letsencrypt/live/casa.drcastiel.com/fullchain.pem; its private key stays on the Pi. Certbot uses DNS-01 validation with the pre-existing tunnel account's Cloudflare credential, stored root-only at /etc/letsencrypt/cloudflare/casa.ini. No credential or certificate private key belongs in this repository. certbot.timer handles renewal; /etc/letsencrypt/renewal-hooks/deploy/reload-casa validates and reloads the private gateway after successful renewal. The dashboard's read-only DNS discovery token is unchanged.
+
+Validate with `sudo nginx -t -c /etc/drcastiel/casa-nginx.conf`, `sudo systemctl status drcastiel-casa`, and `sudo certbot renew --dry-run --cert-name casa.drcastiel.com --run-deploy-hooks --no-random-sleep-on-renew`. DNS and prior gateway configuration backups are under /mnt/ssd/docker/web-stack/backups/casa-https-20261023-200911.
