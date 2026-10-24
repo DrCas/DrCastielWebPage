@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env*
+*token*
+uptime_history.json
+*.sqlite3*
+test_*.py

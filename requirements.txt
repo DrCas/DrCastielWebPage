@@ -1,2 +1,4 @@
 flask
 psutil
+bleach>=6.2,<7
+Markdown>=3.7,<4

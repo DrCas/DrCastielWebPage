@@ -28,6 +28,7 @@ import os
 import ssl
 import time
 import shutil
+import socket
 import subprocess
 import threading
 import urllib.error
@@ -53,6 +54,7 @@ _UPTIME_LOCK = threading.Lock()
 PUBLIC_ENDPOINTS = [
     {"id": "dev", "name": "Crown Dev Site", "url": "https://dev.drcastiel.com"},
     {"id": "admin", "name": "Admin Portal", "url": "https://admin.drcastiel.com"},
+    {"id": "customer", "name": "Customer Portal", "url": "https://customer.drcastiel.com"},
     {"id": "home", "name": "DrCastiel Home", "url": "https://drcastiel.com"},
 ]
 
@@ -81,6 +83,23 @@ def _systemctl_active_state(unit: str) -> Dict[str, Optional[str]]:
         elif line.startswith("SubState="):
             sub = line.split("=", 1)[1] or None
     return {"unit": unit, "active_state": active, "sub_state": sub}
+
+def _tcp_service_state(name: str, host: str, port: int) -> Dict[str, Optional[str]]:
+    """Represent a Docker or host service using a narrow TCP health probe."""
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return {"unit": name, "active_state": "active", "sub_state": "running"}
+    except OSError:
+        return {"unit": name, "active_state": "inactive", "sub_state": "unreachable"}
+
+def _cloudflared_state(endpoint_results: list[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    """Public endpoint probes traverse Cloudflare Tunnel end to end."""
+    active = any(endpoint.get("ok") for endpoint in endpoint_results)
+    return {
+        "unit": "cloudflared",
+        "active_state": "active" if active else "inactive",
+        "sub_state": "running" if active else "unreachable",
+    }
 
 def _uptime_seconds() -> Optional[float]:
     if psutil is None:
@@ -334,12 +353,13 @@ def api_status():
     uptime_s = _uptime_seconds()
     temp_c = _cpu_temp_c()
     mem = _mem_stats()
-    disk = _disk_stats("/")
+    disk = _disk_stats(os.getenv("STATUS_DISK_PATH", "/"))
     net = _net_io()
+    endpoint_results = _public_endpoint_status()
 
     payload = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "public_endpoints": _public_endpoint_status(),
+        "public_endpoints": endpoint_results,
         "pi": {
             "uptime_seconds": uptime_s,
             "uptime_human": _human_uptime(uptime_s),
@@ -352,10 +372,9 @@ def api_status():
             "health": _health(mem, disk, temp_c),
         },
         "services": {
-            # Change unit names if yours differ:
-            "cloudflared": _systemctl_active_state("cloudflared.service"),
-            "gunicorn": _systemctl_active_state("crown-admin.service"),
-            "nginx": _systemctl_active_state("nginx.service"),
+            "cloudflared": _cloudflared_state(endpoint_results),
+            "gunicorn": _tcp_service_state("grafxolution-portal", "grafxolution-portal", 8000),
+            "nginx": _tcp_service_state("nginx", "host.docker.internal", 80),
         },
     }
     return jsonify(payload)

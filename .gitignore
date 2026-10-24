@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .env
+
+# Runtime state and local credentials
+uptime_history.json
+*.sqlite3*
+*-token*
+.env.*
